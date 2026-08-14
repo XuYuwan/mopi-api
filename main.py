@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from ytmusicapi import YTMusic
 from typing import Optional, List, Dict, Any
+import yt_dlp
 import uvicorn
 
 app = FastAPI(
@@ -79,50 +80,60 @@ async def search_tracks(
 @app.get("/track/{video_id}")
 async def get_track(video_id: str) -> Dict[str, Any]:
     """
-    Get track with REAL audio stream URL for ExoPlayer!
+    Get track with REAL decrypted audio stream URL using yt-dlp!
     
-    Note: Stream URLs expire after ~6 hours. Call this right before playback.
+    Note: Stream URLs expire after ~6 hours. Call right before playback.
     """
     try:
-        song = ytmusic.get_song(video_id)
-        
-        if not song:
-            raise HTTPException(status_code=404, detail="Track not found")
-        
-        video_details = song.get("videoDetails", {})
-        streaming_data = song.get("streamingData", {})
-        
-        # Extract best audio format (highest bitrate)
-        formats = streaming_data.get("adaptiveFormats", [])
-        audio_formats = [f for f in formats if "audio/" in f.get("mimeType", "")]
-        
-        if not audio_formats:
-            raise HTTPException(status_code=404, detail="No audio stream available")
-        
-        # Pick highest bitrate
-        best_format = max(audio_formats, key=lambda x: x.get("bitrate", 0))
-        stream_url = best_format.get("url")
-        
-        if not stream_url:
-            raise HTTPException(status_code=404, detail="Stream URL not found")
-        
-        # Get thumbnail
-        thumbnails = video_details.get("thumbnail", {}).get("thumbnails", [])
-        thumb_url = thumbnails[-1].get("url") if thumbnails else None
-        
-        track = {
-            "id": video_id,
-            "title": video_details.get("title", ""),
-            "artistName": video_details.get("author", ""),
-            "durationMs": int(video_details.get("lengthSeconds", 0)) * 1000,
-            "thumbnailUrl": thumb_url,
-            "streamUrl": stream_url  # DIRECT AUDIO STREAM! 🎵
+        # Use yt-dlp to extract stream URL (handles signatureCipher decryption)
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False
         }
         
-        return {
-            "success": True,
-            "track": track
-        }
+        video_url = f"https://music.youtube.com/watch?v={video_id}"
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            
+            # Get best audio format
+            formats = info.get('formats', [])
+            audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
+            
+            if not audio_formats:
+                # Fallback to any format with audio
+                audio_formats = [f for f in formats if f.get('acodec') != 'none']
+            
+            if not audio_formats:
+                raise HTTPException(status_code=404, detail="No audio stream found")
+            
+            # Pick highest bitrate
+            best_audio = max(audio_formats, key=lambda x: x.get('abr', 0) or x.get('tbr', 0))
+            stream_url = best_audio.get('url')
+            
+            if not stream_url:
+                raise HTTPException(status_code=404, detail="Stream URL not found")
+            
+            # Get thumbnail
+            thumbnails = info.get('thumbnails', [])
+            thumb_url = thumbnails[-1].get('url') if thumbnails else None
+            
+            track = {
+                "id": video_id,
+                "title": info.get('title', ''),
+                "artistName": info.get('artist') or info.get('uploader', ''),
+                "durationMs": int(info.get('duration', 0)) * 1000,
+                "thumbnailUrl": thumb_url,
+                "streamUrl": stream_url  # REAL DECRYPTED STREAM! 🎵
+            }
+            
+            return {
+                "success": True,
+                "track": track
+            }
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get track: {str(e)}")
 
