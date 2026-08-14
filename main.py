@@ -79,10 +79,9 @@ async def search_tracks(
 @app.get("/track/{video_id}")
 async def get_track(video_id: str) -> Dict[str, Any]:
     """
-    Get detailed track info and stream URL
+    Get track with REAL audio stream URL for ExoPlayer!
     
-    Note: For actual audio streaming, you'll need youtube-dl or yt-dlp
-    to extract the direct audio URL. This returns the YouTube Music URL.
+    Note: Stream URLs expire after ~6 hours. Call this right before playback.
     """
     try:
         song = ytmusic.get_song(video_id)
@@ -91,17 +90,33 @@ async def get_track(video_id: str) -> Dict[str, Any]:
             raise HTTPException(status_code=404, detail="Track not found")
         
         video_details = song.get("videoDetails", {})
+        streaming_data = song.get("streamingData", {})
+        
+        # Extract best audio format (highest bitrate)
+        formats = streaming_data.get("adaptiveFormats", [])
+        audio_formats = [f for f in formats if "audio/" in f.get("mimeType", "")]
+        
+        if not audio_formats:
+            raise HTTPException(status_code=404, detail="No audio stream available")
+        
+        # Pick highest bitrate
+        best_format = max(audio_formats, key=lambda x: x.get("bitrate", 0))
+        stream_url = best_format.get("url")
+        
+        if not stream_url:
+            raise HTTPException(status_code=404, detail="Stream URL not found")
+        
+        # Get thumbnail
+        thumbnails = video_details.get("thumbnail", {}).get("thumbnails", [])
+        thumb_url = thumbnails[-1].get("url") if thumbnails else None
         
         track = {
             "id": video_id,
             "title": video_details.get("title", ""),
             "artistName": video_details.get("author", ""),
             "durationMs": int(video_details.get("lengthSeconds", 0)) * 1000,
-            "thumbnailUrl": video_details.get("thumbnail", {}).get("thumbnails", [{}])[-1].get("url"),
-            "streamUrl": f"https://music.youtube.com/watch?v={video_id}",
-            # For ExoPlayer, you'd need yt-dlp to get direct stream URL
-            # This is a placeholder - see comment below
-            "directStreamUrl": None  # TODO: Integrate yt-dlp
+            "thumbnailUrl": thumb_url,
+            "streamUrl": stream_url  # DIRECT AUDIO STREAM! 🎵
         }
         
         return {
