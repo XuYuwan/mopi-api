@@ -87,10 +87,11 @@ async def get_track(video_id: str) -> Dict[str, Any]:
     try:
         # Use yt-dlp to extract stream URL (handles signatureCipher decryption)
         ydl_opts = {
-            'format': 'bestaudio/best',
+            'format': 'bestaudio',  # Simplified - let yt-dlp pick best
             'quiet': True,
             'no_warnings': True,
-            'extract_flat': False
+            'extract_flat': False,
+            'nocheckcertificate': True  # Skip SSL verification issues
         }
         
         video_url = f"https://music.youtube.com/watch?v={video_id}"
@@ -98,20 +99,8 @@ async def get_track(video_id: str) -> Dict[str, Any]:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             
-            # Get best audio format
-            formats = info.get('formats', [])
-            audio_formats = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none']
-            
-            if not audio_formats:
-                # Fallback to any format with audio
-                audio_formats = [f for f in formats if f.get('acodec') != 'none']
-            
-            if not audio_formats:
-                raise HTTPException(status_code=404, detail="No audio stream found")
-            
-            # Pick highest bitrate
-            best_audio = max(audio_formats, key=lambda x: x.get('abr', 0) or x.get('tbr', 0))
-            stream_url = best_audio.get('url')
+            # yt-dlp automatically picks best audio, just get the URL
+            stream_url = info.get('url')
             
             if not stream_url:
                 raise HTTPException(status_code=404, detail="Stream URL not found")
